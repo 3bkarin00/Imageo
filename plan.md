@@ -1,10 +1,14 @@
-# plan.md — Personal AI Image Studio "imageo" (mobile PWA + cloud GPU) · v3.2
+# plan.md — Personal AI Image Studio "imageo" (mobile PWA + cloud GPU) · v3.3
 
-**This is the project constitution for building `imageo` with Claude Code** (repo:
-`github.com/3bkarin00/Imageo`). It is self-contained: operating protocol, rules, decisions, agent
-roster, phased plan with acceptance checks, interface contracts, Git workflow, and seeds for the living
-files. Step 0.0 materializes the on-disk files. `CLAUDE.md` at the repo root points every Claude Code
-session here.
+**This is the project constitution for building `imageo` with Claude Code** (default repo:
+`github.com/3bkarin00/Imageo`; if this file lives in another repo, that repo's `origin` is the project repo).
+It is self-contained: operating protocol, rules, decisions, agent roster, phased plan with acceptance checks,
+interface contracts, Git workflow, seeds for every file the build needs, the project's known values, and the
+human's setup and start-up guides. Step 0.0 materializes the on-disk files. `CLAUDE.md` at the repo root
+(text in §9) points every Claude Code session here.
+
+> **Start here.** Human: §16 (accounts) → §17 (start Claude Code). Claude Code: §2, then `handoff.md`;
+> if `handoff.md` doesn't exist yet, this is a fresh repo — run Phase 0.0 from §9 + §11. Known values: §15.
 
 > **Two files live OUTSIDE this one** (they change every step): `handoff.md` (where we are + next
 > action) and `change_log.md` (append-only history). Seeds are in §11.
@@ -36,6 +40,9 @@ phone app backed by cloud GPUs. What changed vs v2.1:
   rules out image work in the Worker). Touches §1, §3, §4, D4, D9, D16, D18, Phases 0/1/2/3/4/8, §8–§10, §12.
 - **v3.2 [DECISION] — invisible watermark removed.** The subject is a co-creator of the photoshoots, not a third
   party, so a hidden "AI-made" mark adds no protection she wants. Generation metadata stays in D1. (D6 revised.)
+- **v3.3 — everything in one file.** Added §15 project facts (domain, RunPod volume, GPU choices), §16 the human's
+  account setup guide, §17 how to start Claude Code and hand over secrets, `CLAUDE.md` text in §9, §11 seeds
+  updated to the real current state; D2 adds a photoreal-checkpoint test in Phase 1; Gallery downloads originals.
 
 ---
 
@@ -70,6 +77,9 @@ Phone (PWA) ──HTTPS──▶ Cloudflare Access (email one-time code, only yo
 ---
 
 ## 2. Operating protocol (read every session, in this order)
+0. **Fresh repo?** If `handoff.md` is missing, do Phase 0.0: write every file in §9 and §11 to the repo root,
+   create branch `phase-0-infra`, commit + push. If secrets are needed this session and not yet set, ask the
+   human per §17 — never write a secret into any tracked file.
 1. **handoff.md** — where we are + the single next action. READ FIRST, REWRITE LAST.
 2. **plan.md** (this file) — north star, rules, decisions, roster, phases, contracts.
 3. **Agent roster (§6)** — the manager role dispatches the agent role that owns the current phase.
@@ -180,6 +190,9 @@ is needed in `handoff.md` under Blockers, commit + push, and wait.
 - **D1 — Orchestrate ComfyUI, don't rebuild it** — on RunPod Serverless via its job API (`/run`, `/status`, `/cancel`).
 - **D2 — Base model = SDXL only for v1.** Cheapest, fastest cold starts, deepest LoRA/ControlNet/FaceDetailer
   ecosystem. Use is personal-only, so non-commercial models would be allowed, but none are needed.
+  **Checkpoint:** Phase 1 runs a side-by-side test (same prompts + seeds) of SDXL base vs a photo-realistic SDXL
+  fine-tune (candidates: RealVisXL, Juggernaut XL — resolve current versions + licenses live) and the human picks
+  one; the LoRA (Phase 6) is trained on the chosen checkpoint and `base_arch` records it.
 - **D3 — Identity = trained SDXL LoRA + FaceDetailer.** No face-swap, no InstantID in v1.
 - **D4 — PWA (React + Vite) + Cloudflare Worker (TypeScript, Hono) + D1 + R2.** Installable to the home screen;
   no app store. The PWA is served as the Worker's static assets, so app and API share one origin.
@@ -194,7 +207,9 @@ is needed in `handoff.md` under Blockers, commit + push, and wait.
   (v3 used a VPS; replaced in v3.1 because a VPS is billed for every hour it exists.)
 - **D10 — Compute = RunPod Serverless** (gen + vision endpoints) **+ one RunPod GPU pod for training.**
   Models + LoRA live on a RunPod network volume; attaching it pins endpoints to that volume's datacenter —
-  choose the datacenter once, for GPU availability.
+  choose the datacenter once, for GPU availability. **GPUs:** serverless gen + vision on the **24GB tier**
+  (L4 / A5000 / 3090) with **24GB PRO (RTX 4090)** as second choice for availability; training pod = **RTX 4090**.
+  The network volume already exists (§15).
 - **D11 — Single user.** No account system beyond Cloudflare Access; the API trusts only the Access identity.
 - **D12 — One-off scripted training.** kohya sd-scripts SDXL LoRA on a pod, config committed to `training/`.
   No in-app wizard in v1.
@@ -250,7 +265,10 @@ Cloudflare, Zero Trust team, R2 enabled, RunPod account + API key, the one allow
 `studio.<domain>`: allow only your email (one-time code); a bypass policy for `/hooks/runpod/*` only, recorded in
 `infra/access_policy.md`. (0.4) Worker middleware verifies the Access JWT (team domain + AUD) on every non-hook
 route; the hook route checks the HMAC and returns 401 otherwise. (0.5) GitHub Actions deploys the Worker with a
-scoped Cloudflare API token secret. (0.6) RunPod network volume created in the chosen datacenter.
+scoped Cloudflare API token secret. (0.6) RunPod network volume — **already created by the human** (§15): look
+up its datacenter and size with the RunPod API and record both in §15 and `handoff.md`; if that datacenter
+doesn't offer the 24GB tier, stop and ask the human before anything else.
+**Status at v3.3:** 0.0 and 0.1 are done; the human has completed §16 (domain, Zero Trust, R2, RunPod).
 **Acceptance:** phone opens the URL → email code → hello page (screenshot); a different email is denied
 (screenshot); the `*.workers.dev` address does not serve the app (test log); a request with a forged or missing
 Access JWT is rejected (test log); `/hooks/runpod/x` without a valid signature → 401 (test log).
@@ -265,8 +283,9 @@ network volume (SDXL base + VAE, OpenPose ControlNet SDXL, face detector, upscal
 handler post-processing: **upload the lossless PNG to R2 `outputs/` via the S3-compatible API → return
 only object keys** (verify the base worker's S3 env vars against its current docs; if it can't target R2, add
 the upload in our handler); GitHub Actions builds/pushes the image; endpoint config: max workers 1, min 0,
-network volume attached, R2 write-scoped key in endpoint env; dump `/object_info` from the running worker to
-`server/src/workflows/object_info.json`.
+network volume attached, R2 write-scoped key in endpoint env, GPU tiers per D10; dump `/object_info` from the
+running worker to `server/src/workflows/object_info.json`; **checkpoint test (D2):** 6 prompts × 2 seeds on SDXL
+base vs one photo-realistic SDXL fine-tune → contact sheet in R2 → human picks → pin the winner in `manifest.yaml`.
 **Acceptance:** `/runsync` with a bundled SDXL txt2img workflow returns an R2 object key, and that object is a
 valid PNG byte-identical to what ComfyUI produced (downloaded file + hash check); cold-start and warm timings recorded in change_log;
 endpoint shows 0 workers when idle (screenshot).
@@ -328,7 +347,7 @@ for one photo generates an image via Phase 3 (file).
 **Steps:** consent record created and verified first (refuse otherwise); `training/prepare.py`: dedup
 (perceptual hash), face-centered crops, resolution bucketing, captions (auto + editable, trigger word);
 `training/config.toml` for kohya sd-scripts SDXL LoRA (resolve current flags from the pinned version);
-`training/run_pod.sh`: start GPU pod with the network volume → train → fixed-seed sample grid every N steps →
+`training/run_pod.sh`: start an RTX 4090 GPU pod with the network volume (on the D2-chosen checkpoint) → train → fixed-seed sample grid every N steps →
 copy chosen checkpoint to the volume → delete training photos from volume/pod → terminate pod; register the
 LoRA in `loras`.
 **Acceptance:** training without a consent row is refused (log); a full run produces the LoRA file + sample grid
@@ -346,7 +365,7 @@ the Worker's static assets.
   image→image + strength / pose from reference photo), face fix toggle, upscale toggle, size/seed/steps
   (advanced, collapsed), job status (queued/running/done + elapsed + cold-start note), cancel.
 - **Gallery tab:** grid → detail (image, prompt, JSON, settings) → reuse settings, favorite, download/share,
-  delete (trash).
+  delete (trash). Grid may use small previews, but **download/share always delivers the original lossless PNG**.
 - **Settings:** jobs today, spend so far vs caps, consent record view, about.
 Mobile-first layout; no secrets in the client; all calls same-origin through Cloudflare Access.
 **Acceptance (on your phone, laptop off):** install to home screen → photo → JSON with replacements → send to
@@ -425,6 +444,24 @@ MONTHLY_SPEND_CEILING_USD=30
 # Set in GitHub Actions secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, registry credentials.
 ```
 
+**`CLAUDE.md`**
+```
+# CLAUDE.md — imageo
+
+This repo is built phase by phase under the constitution in `plan.md`. Every session:
+
+1. Read `handoff.md` first (if it doesn't exist yet, you are at Phase 0, step 0.0 — create it from `plan.md` §11).
+2. Read `plan.md` — follow §2 (protocol) and §4 (rules) exactly; settled decisions are in §5; known values in §15.
+3. Do only the single next action in `handoff.md`, on the branch it names.
+4. After each step: acceptance artifact → append `change_log.md` → rewrite `handoff.md` → commit + push on the phase branch.
+5. Merge a phase branch into `main` only via PR, and only after its gate (§10) has a PASS in `change_log.md`.
+
+Hard stops:
+- Never assume an external API/CLI signature; verify against live docs, the running service, or the installed package.
+- Never commit secrets, `.env`, `.dev.vars`, model weights, datasets, or DB files. Secrets handling: plan.md §17.
+- If a step needs the human (accounts, payment, domain, phone screenshots), write the exact request under Blockers in `handoff.md`, commit + push, and stop.
+```
+
 **`manifest.yaml`** — rewritten in Phase 1 to the v3 scope: keep SDXL base + VAE, controlnet_aux (DWPose),
 Impact-Pack (+Subpack) + face detector, UltimateSDUpscale, kohya sd-scripts; **add** SDXL OpenPose ControlNet,
 upscaler model, the VLM for `worker/vision/`; **remove** FLUX.2, Z-Image, Qwen-Image, InstantID/InsightFace,
@@ -455,18 +492,23 @@ IP-Adapter, IC-Light, SAM2, ai-toolkit, OneTrainer. Keep per-model `license` fla
 # HANDOFF — read FIRST, rewrite LAST
 ## Current state
 - Phase: 0 — Infrastructure & access
-- Step: 0.0 — Materialize on-disk files (.gitignore, .dev.vars.example, handoff.md, change_log.md)
-- Status: NOT STARTED
+- Step: 0.2 — Worker skeleton + `wrangler.toml` (0.0 done by writing this file; 0.1 done by the human, plan.md §16)
+- Status: READY once the session-start secrets in plan.md §17 are set
 - Owner role: infra-agent
 - Branch: phase-0-infra
-- Last updated: 0000-00-00 00:00 by manager
+- Last updated: <fill in on first write> by manager
+## Known values
+See plan.md §15 (domain imageoo.party → https://studio.imageoo.party; RunPod network volume d61ym2xhuy).
 ## Next action (do exactly this)
-Create branch `phase-0-infra` off `main`, write the files from plan.md §9 and §11 to the repo root,
-then produce the 0.1 prerequisites checklist for the human (domain on Cloudflare, Zero Trust, R2, RunPod key).
+1. Ask the human for the values still missing in plan.md §15 (Zero Trust team name, allowed email) and have them
+   set the RunPod API key per §17. 2. Look up the network volume's datacenter + size via the RunPod API; record them.
+3. Create the Worker skeleton in `server/` (TypeScript + Hono) and `wrangler.toml` with D1 + R2 bindings, custom
+   domain `studio.imageoo.party`, `workers_dev = false`, preview URLs off; deploy a "hello" page. Verify every
+   wrangler setting and command against current Cloudflare docs and the installed wrangler version.
 ## Acceptance for this step
-All §9 + §11 files exist at repo root and parse.
+`https://studio.imageoo.party` serves the hello page; the `*.workers.dev` address does not (saved curl output).
 ## Blockers
-- Human must provide: domain in Cloudflare, Zero Trust team, R2 enabled, RunPod API key.
+- none, once §17 secrets are set
 ## Notes
 - No phase starts before its predecessor has a PASS in change_log.md.
 - Every acceptance check produces a named artifact; no mocks, no assumed API signatures.
@@ -480,21 +522,31 @@ All §9 + §11 files exist at repo root and parse.
 # ## <YYYY-MM-DD HH:MM> — [Phase X.Y] <title>
 # - Role / Branch / Changed / Files / Artifact / Why / Verification(PASS|FAIL) / Follow-ups
 ---
-## 0000-00-00 00:00 — [Phase 0.0] Repository initialized
+## <fill in> — [Phase 0.1] Human prerequisites completed (plan.md §16)
+- Role: manager
+- Branch: phase-0-infra
+- Changed: recorded human-provided values in plan.md §15
+- Files: none (accounts created outside the repo)
+- Artifact: plan.md §15 — domain imageoo.party, Zero Trust on, R2 on, RunPod funded, volume d61ym2xhuy
+- Why: Phase 0.2+ needs these accounts
+- Verification: PASS — human confirmed; volume datacenter to be verified via API in 0.6
+- Follow-ups: infra-agent → 0.2 Worker skeleton
+
+## <fill in> — [Phase 0.0] Repository initialized
 - Role: manager
 - Branch: phase-0-infra (off main)
-- Changed: scaffolded repo + control protocol from plan.md v3
-- Files: /plan.md, /CLAUDE.md, /handoff.md, /change_log.md
-- Artifact: control files present at repo root
+- Changed: wrote control and config files from plan.md v3.3 §9 + §11
+- Files: /plan.md, /CLAUDE.md, /handoff.md, /change_log.md, /.gitignore, /.dev.vars.example
+- Artifact: files present at repo root
 - Why: lock the operating protocol before building
-- Verification: PASS — control files present
-- Follow-ups: infra-agent → §9 files, prerequisites checklist, Cloudflare Worker + Access setup
+- Verification: PASS — files present and parse
+- Follow-ups: 0.2 Worker skeleton
 ```
 
 ---
 
 ## 12. Usage runbook (for you, after the build)
-- **Open the app:** phone → `https://studio.<domain>` → email code → "Add to Home Screen" once; afterwards
+- **Open the app:** phone → `https://studio.imageoo.party` → email code → "Add to Home Screen" once; afterwards
   open it like any app. Access sessions expire periodically; you'll re-enter an email code.
 - **Photo → prompt:** Prompt tab → shoot/upload → check JSON fields and the highlighted replacements → edit if
   needed → Send to Generate.
@@ -508,7 +560,7 @@ All §9 + §11 files exist at repo root and parse.
 
 ---
 
-## 13. Git / version-control workflow (GitHub repo `3bkarin00/Imageo`; mandatory)
+## 13. Git / version-control workflow (GitHub repo `3bkarin00/Imageo`, or this file's repo; mandatory)
 **Branching model**
 - `main` only receives **phase-complete, acceptance-PASS** work (plus this initial constitution commit).
 - One branch per phase, `phase-<N>-<slug>`: `phase-0-infra`, `phase-1-gen-worker`, `phase-2-backend`,
@@ -536,3 +588,89 @@ Z-Image), multi-subject LoRA management UI.
 **Not planned:** video/animation; multiple users or sharing; public access; native app-store apps; commercial
 use (personal use only — revisit model licenses before changing this); rebuilding diffusion/training internals;
 running models or image processing in the Worker; a VPS or any always-on server.
+
+---
+
+## 15. Project facts (known values — update here when they change; never put secrets here)
+| Item | Value | Status |
+|---|---|---|
+| Owner / only user | Salah (single user, personal use) | fixed |
+| Repo | `github.com/3bkarin00/Imageo` (or this file's repo) | fixed |
+| Domain (on Cloudflare) | `imageoo.party` | ✅ bought |
+| App URL | `https://studio.imageoo.party` | created in Phase 0.2 |
+| Cloudflare Zero Trust | enabled (free plan) | ✅ — **team name: ask the human** (one.dash.cloudflare.com → Settings) |
+| Cloudflare R2 | enabled | ✅ — bucket created by Claude Code in 0.2 |
+| Allowed login email | **ask the human** | ⏳ |
+| RunPod account | funded | ✅ |
+| RunPod network volume ID | `d61ym2xhuy` | ✅ created — datacenter + size: look up via API (0.6) |
+| RunPod API key | held by the human; set per §17 | never in this file |
+| Serverless GPUs | 24GB tier (L4/A5000/3090), fallback 24GB PRO (RTX 4090) | D10 |
+| Training GPU | RTX 4090 pod, one run | D10 |
+| Image model | SDXL family; base vs photo-realistic fine-tune decided in Phase 1 | D2 |
+| Subject consent file | her written consent (PDF/photo) | ⏳ needed before Phase 6 |
+| Laptop | dev only; Git + Node.js LTS + Claude Code installed per §17 | — |
+
+---
+
+## 16. Human setup guide (accounts — do these once, in order)
+Everything here is done by the human in a browser. Claude Code cannot create these accounts.
+
+**A. Cloudflare — hosting, login, storage** ✅ done
+1. Sign up: https://dash.cloudflare.com/sign-up
+2. Buy the domain at https://domains.cloudflare.com (done: `imageoo.party`).
+3. Zero Trust: https://one.dash.cloudflare.com → pick a team name → **Free** plan (may ask for a card).
+   The team name is under **Settings**; it looks like `<team>.cloudflareaccess.com`.
+4. R2: https://dash.cloudflare.com → left menu **Storage & databases** → **R2 Object Storage** → **Overview** →
+   enable (likely asks for a card/PayPal; usage stays in the free allowance). Don't create a bucket.
+
+**B. RunPod — GPUs** ✅ done
+1. Sign up: https://www.runpod.io → console: https://console.runpod.io
+2. **Billing** → add $10–20 credit.
+3. **Settings → API Keys → Create API Key** (read/write) → save it in a password manager. Guide:
+   https://docs.runpod.io/get-started/api-keys
+4. Network volume: created (`d61ym2xhuy`). Don't create endpoints or pods — Claude Code does that in Phases 1 and 6.
+
+**C. GitHub** ✅ done — repo exists. Claude Code will say when to add Actions secrets (Phase 0.5, Phase 1).
+
+**D. Consent** ⏳ — her written consent (a signed note, message or form) agreeing to an AI model of her likeness
+being trained and used to generate images for personal use. Save as PDF/photo; it's uploaded privately in Phase 6.
+
+**E. Still to tell Claude Code:** Zero Trust team name, the one allowed login email.
+
+---
+
+## 17. Starting Claude Code + handing over secrets
+**Install on the laptop (once)**
+- Git: https://git-scm.com/downloads
+- Node.js LTS: https://nodejs.org (needed by `wrangler`, Cloudflare's deploy tool)
+- Claude Code: https://docs.claude.com/en/docs/claude-code/setup
+
+**Open the project**
+```
+git clone https://github.com/3bkarin00/Imageo.git
+cd Imageo
+git checkout phase-0-infra      # skip if this is a fresh repo with only plan.md; Claude Code creates the branch
+claude
+```
+First message to Claude Code:
+> Read CLAUDE.md, plan.md and handoff.md (if present) and continue from the next action.
+> Zero Trust team: `<team>`. Allowed email: `<email>`.
+
+**Secrets — where each one goes (never in a tracked file, never in a commit)**
+| Secret | Who creates it | Where it is stored |
+|---|---|---|
+| `RUNPOD_API_KEY` | human (§16 B3) | local `.dev.vars` (gitignored) + `wrangler secret put RUNPOD_API_KEY`; RunPod endpoints don't need it |
+| Cloudflare login for `wrangler` | human approves in browser | `npx wrangler login` (local auth, not in repo) |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | human: dash → My Profile → API Tokens → "Edit Cloudflare Workers" template | GitHub → repo Settings → Secrets and variables → Actions (Phase 0.5) |
+| `WEBHOOK_HMAC_SECRET` | Claude Code generates (random 32+ bytes) | `.dev.vars` + `wrangler secret put` |
+| R2 S3 keys (signing key; write-only `outputs/` key for RunPod) | human: R2 → Manage API tokens, as Claude Code specifies | `.dev.vars` + `wrangler secret put`; the write-only key goes in the RunPod endpoint env (Phase 1) |
+| `HF_TOKEN` (only if a model is gated) | human: huggingface.co → Settings → Access Tokens | RunPod endpoint env |
+
+How to hand a secret over: the human may either run the `wrangler secret put …` command themselves and paste the
+value at its prompt, or give the value to Claude Code in the session; either way Claude Code writes it **only**
+to `.dev.vars` and Cloudflare secrets, confirms `.dev.vars` is gitignored before writing, and never echoes it
+into logs, `handoff.md`, `change_log.md` or commit messages. GitHub's push protection blocks commits containing
+known key formats — a blocked push means a secret leaked into a file; remove it, don't bypass the block.
+
+**When Claude Code stops and asks for something:** it is a §2 human step (an account setting, a payment, a
+screenshot from the phone). Do it, reply "done" with any value it asked for, and it continues.

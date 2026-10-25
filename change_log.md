@@ -3,6 +3,17 @@
 # ## <YYYY-MM-DD HH:MM> — [Phase X.Y] <title>
 # - Role / Branch / Changed / Files / Artifact / Why / Verification(PASS|FAIL) / Follow-ups
 ---
+## 2026-10-25 — [Phase 0.1] plan.md v3.3 — everything in one file
+- Role: manager
+- Branch: phase-0-infra
+- Changed: added §15 project facts, §16 human setup guide, §17 start-up + secrets handling; CLAUDE.md text in §9;
+  §11 seeds reflect the real current state; D2 checkpoint test (Phase 1); D10 GPU choices; Gallery downloads originals
+- Files: /plan.md, /CLAUDE.md, /handoff.md
+- Artifact: plan.md v3.3
+- Why: human wants a single file to hand to Claude Code, usable in this or a fresh repo
+- Verification: PASS — sections 15–17 present; CLAUDE.md matches §9; no secrets in tracked files (grep)
+- Follow-ups: human gives Zero Trust team + email and sets the RunPod key (§17); then 0.2
+
 ## 2026-10-25 — [DECISION] [Phase 0] Invisible watermark removed (plan.md v3.2)
 - Role: manager
 - Branch: phase-0-infra
