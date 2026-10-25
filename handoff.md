@@ -17,9 +17,14 @@ deploy a "hello" page. Verify every wrangler setting and command against current
 installed wrangler version before relying on it.
 ## Acceptance for this step
 `https://studio.<domain>` serves the hello page; the `*.workers.dev` address does not (saved curl output).
+## Known values (from the human, 2026-10-25)
+- Domain: imageoo.party → app at `https://studio.imageoo.party`
+- Cloudflare Zero Trust: enabled. R2: enabled.
+- RunPod: account funded; network volume already created, id `d61ym2xhuy` (record its datacenter when first used).
+- RunPod API key: the first key was exposed in a chat and must be revoked; human creates a new one and sets it
+  only via `wrangler secret put RUNPOD_API_KEY` in their own terminal. Never ask for it in chat.
 ## Blockers
-- Human must complete infra/PREREQUISITES.md and provide: domain name, Zero Trust team name, R2 enabled (yes/no),
-  chosen RunPod datacenter, the one allowed email. Secrets are set by the human with `wrangler secret put`, never pasted.
+- Still needed from the human: Zero Trust team name, the network volume's datacenter, the one allowed email.
 ## Notes
 - No phase starts before its predecessor has a PASS in change_log.md.
 - Every acceptance check produces a named artifact; no mocks, no assumed API signatures.
