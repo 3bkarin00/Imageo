@@ -1,0 +1,17 @@
+# Local dev only: copy to .dev.vars (gitignored). In production set each SECRET with `wrangler secret put <NAME>`.
+# Plain vars (caps, IDs) go in wrangler.toml [vars]. Never expose any of these to the PWA.
+# --- secrets ---
+RUNPOD_API_KEY=
+WEBHOOK_HMAC_SECRET=           # random 32+ bytes; signs per-job webhook URLs
+R2_SIGNING_ACCESS_KEY_ID=      # R2 S3 key used to mint short-lived signed URLs for RunPod
+R2_SIGNING_SECRET_ACCESS_KEY=
+# --- vars ---
+RUNPOD_GEN_ENDPOINT_ID=
+RUNPOD_VISION_ENDPOINT_ID=
+CF_ACCESS_TEAM_DOMAIN=         # e.g. yourteam.cloudflareaccess.com
+CF_ACCESS_AUD=                 # Access application audience tag (JWT verification)
+PUBLIC_BASE_URL=               # https://studio.<domain>
+DAILY_JOB_CAP=100
+MONTHLY_SPEND_CEILING_USD=30
+# Set on the RunPod endpoints instead (not here): R2 write-scoped key for outputs/, HF_TOKEN if a model is gated.
+# Set in GitHub Actions secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, registry credentials.

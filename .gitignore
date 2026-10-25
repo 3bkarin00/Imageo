@@ -13,3 +13,5 @@ node_modules/
 /training/dataset/
 /training/output/
 *.db
+.dev.vars
+.wrangler/

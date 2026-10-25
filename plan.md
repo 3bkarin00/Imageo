@@ -1,7 +1,7 @@
-# plan.md — Personal AI Image Studio "imageo" (mobile PWA + cloud GPU) · v3
+# plan.md — Personal AI Image Studio "imageo" (mobile PWA + cloud GPU) · v3.1
 
 **This is the project constitution for building `imageo` with Claude Code** (repo:
-`github.com/salahsterr/imageo`). It is self-contained: operating protocol, rules, decisions, agent
+`github.com/3bkarin00/Imageo`). It is self-contained: operating protocol, rules, decisions, agent
 roster, phased plan with acceptance checks, interface contracts, Git workflow, and seeds for the living
 files. Step 0.0 materializes the on-disk files. `CLAUDE.md` at the repo root points every Claude Code
 session here.
@@ -30,6 +30,10 @@ phone app backed by cloud GPUs. What changed vs v2.1:
 - **Kept:** handoff/change_log protocol, artifact-backed acceptance, consent record, Git branch-per-phase.
 - **New cost guard** (spend caps, max workers) because serverless billing is open-ended (§4, Phase 8).
 - `manifest.yaml` from v2.1 is **out of scope for v3** and is rewritten in Phase 1 (§9).
+- **v3.1 [DECISION] — VPS replaced by Cloudflare serverless** (Workers + D1 + R2, ~$0/month, pay-per-use).
+  Backend is a TypeScript Worker; job completion arrives by **RunPod webhook** + a reconcile cron instead of a
+  long-running poller; the **GPU worker watermarks and uploads images straight to R2** (Workers' 10 ms CPU limit
+  rules out image work in the Worker). Touches §1, §3, §4, D4, D9, D16, D18, Phases 0/1/2/3/4/8, §8–§10, §12.
 
 ---
 
@@ -43,18 +47,20 @@ A **private, single-user** image studio you use **from your phone**, anywhere:
 3. **Gallery tab** — every generation with its prompt/JSON/settings; reuse, favorite, download, delete.
 
 **We do not build a diffusion engine — we orchestrate ComfyUI**, running on RunPod Serverless.
-Codenames: **`studio`** = the app we build (PWA + VPS backend). **`worker`** = the RunPod GPU side.
+Codenames: **`studio`** = the app we build (PWA + Cloudflare Worker backend). **`worker`** = the RunPod GPU side.
 
 **System shape**
 ```
 Phone (PWA) ──HTTPS──▶ Cloudflare Access (email one-time code, only you)
-                         │  Cloudflare Tunnel (no open inbound web ports on the VPS)
                          ▼
-                 VPS (~$5/mo): FastAPI + SQLite + gallery files + serves the PWA
-                         │  RunPod API (key lives ONLY here)
+        Cloudflare Worker on studio.<domain> (free tier, pay-per-use)
+          • serves the PWA (static assets) + JSON API
+          • D1 = database (jobs, gallery, consent)   • R2 = image storage
+          • RunPod API key lives ONLY here (Worker secret)
+                         │  /run with webhook ──▶        ◀── webhook on completion (/hooks/runpod, HMAC-signed)
                          ▼
         RunPod Serverless endpoints ── network volume (models, LoRA)
-          • gen    : ComfyUI worker (SDXL, ControlNet, FaceDetailer, upscaler)
+          • gen    : ComfyUI worker (SDXL, ControlNet, FaceDetailer, upscaler) → watermark → upload to R2
           • vision : open VLM → JSON description
         RunPod GPU pod (one-off) : LoRA training (kohya sd-scripts) → LoRA to network volume
 ```
@@ -93,18 +99,19 @@ is needed in `handoff.md` under Blockers, commit + push, and wait.
 | `plan.md` | This constitution | Static; edit only via a decision |
 | `handoff.md` | Current phase/step/next action | **Living** — rewritten each step |
 | `change_log.md` | Append-only build history | **Living** — appended each step |
-| `.gitignore`, `.env.example` | Repo hygiene, declared env vars (§9) | Static |
+| `.gitignore`, `.dev.vars.example` | Repo hygiene, declared Worker secrets/vars (§9) | Static |
+| `wrangler.toml` | Worker config: D1 + R2 bindings, cron, custom domain, `workers_dev = false` | Phase 0 |
 | `manifest.yaml` | Pinned worker deps, custom nodes, models (+license flags) | Rewritten Phase 1; bump via decision |
 | `worker/gen/` | Dockerfile + handler for the ComfyUI serverless worker | Built Phase 1 |
 | `worker/vision/` | Dockerfile + handler for the VLM serverless worker | Built Phase 5 |
 | `training/` | Dataset prep + kohya config + run script for the one-off pod | Built Phase 6 |
-| `server/` | FastAPI backend (VPS): api, runpod client, queue, data, prompt service | Phases 2–5 |
+| `server/` | Cloudflare Worker backend (TypeScript, Hono): api, runpod client, jobs, data, prompt service | Phases 0, 2–5 |
 | `server/workflows/templates/` | ComfyUI API-format workflow templates | Phase 3 |
 | `server/filters/neutral_map.yaml` | Explicit term → neutral term mapping | Phase 5 |
-| `migrations/` | Versioned DB migrations | Grows with schema |
+| `migrations/` | Versioned D1 migrations (`wrangler d1 migrations`) | Grows with schema |
 | `web/` | PWA (React + Vite), 3 tabs | Phase 7 |
-| `infra/` | VPS setup script, cloudflared config, systemd units, backup script | Phases 0, 8 |
-| `.github/workflows/` | CI: tests + build/push worker images | Phase 1 |
+| `infra/` | Cloudflare/RunPod setup notes, Access policy record, backup scripts | Phases 0, 8 |
+| `.github/workflows/` | CI: tests, Worker deploy (wrangler), build/push GPU worker images, scheduled D1 backup | Phases 0, 1, 4 |
 | `tests/` | Runnable gate checks (§10) | All phases |
 
 ---
@@ -113,20 +120,26 @@ is needed in `handoff.md` under Blockers, commit + push, and wait.
 **Architecture**
 - studio NEVER implements diffusion/sampling/training loops. Generation = ComfyUI on the worker;
   training = pinned kohya sd-scripts on a pod; JSON description = an open VLM on the vision worker.
-- **The VPS never runs models.** It orchestrates, stores, and serves. No torch on the VPS.
-- All RunPod calls go through `server/runpod_client.py`. No raw RunPod HTTP elsewhere.
-- All generation graphs are built by `server/workflows/builder.py` from template JSON + params,
+- **The Worker never runs models or heavy image/byte work.** It orchestrates, stores metadata, and serves.
+  Free-plan Workers get 10 ms CPU per request: image decoding, watermarking and base64 handling happen on the
+  GPU worker; the Worker only streams R2 objects and handles JSON.
+- All RunPod calls go through `server/src/runpod_client.ts`. No raw RunPod HTTP elsewhere.
+- All generation graphs are built by `server/src/workflows/builder.ts` from template JSON + params,
   validated against an `/object_info` snapshot taken from the deployed worker image.
 - `manifest.yaml` is the single source of truth for worker deps/nodes/models. Nothing installed or
   downloaded outside the worker Dockerfiles / volume-population script.
 
 **Security (single user)**
 - The PWA and API are reachable **only through Cloudflare Access**, allowing exactly one email (yours).
-- The VPS accepts **no inbound traffic except SSH (key-only)**; web traffic arrives via Cloudflare
-  Tunnel (outbound). The API process binds to `127.0.0.1`.
-- **Secrets (RunPod API key, etc.) live only in the VPS `.env`** and in GitHub Actions secrets where CI
-  needs them. Never in the PWA, never in git.
-- The API verifies the Cloudflare Access JWT on every request (defense if the tunnel is misrouted).
+- The Worker is reachable **only on `studio.<domain>`**: `workers_dev = false` and preview URLs disabled, so no
+  `*.workers.dev` address bypasses Access.
+- **Secrets live only as Worker secrets** (`wrangler secret put`), RunPod endpoint env vars, and GitHub Actions
+  secrets where CI needs them. Never in the PWA, never in git.
+- The Worker verifies the Cloudflare Access JWT on every request except `/hooks/runpod/*` (defense if Access
+  is misconfigured).
+- `/hooks/runpod/*` is the only Access-bypassed path. It accepts a call only with a valid per-job HMAC
+  signature, for a job that exists and is still open; anything else → 401, logged.
+- The R2 key given to the GPU worker can write only to the `outputs/` prefix of the bucket (scoped token).
 
 **Cost guard (serverless is billed per use)**
 - Serverless endpoints: **min/active workers = 0**, **max workers = 1**, short idle timeout.
@@ -135,17 +148,20 @@ is needed in `handoff.md` under Blockers, commit + push, and wait.
 - The training pod is started by script and **auto-terminated** when training ends or fails.
 
 **Operational**
-- Jobs are queued **persistently** (SQLite); a VPS restart never loses a job. Every job can be cancelled.
-- Every job is logged (structured, `var/logs/`): job id, intent, params, RunPod request id, status,
-  error, cost estimate.
-- Results are copied from the worker to VPS storage immediately; the gallery never depends on RunPod
-  retaining outputs.
+- Jobs are recorded **persistently** in D1 before submission; nothing lives only in Worker memory. Every job
+  can be cancelled.
+- Completion arrives by **RunPod webhook**; a **cron trigger (≤ every 10 min)** reconciles jobs still open past
+  their expected time via `/status`, because RunPod keeps async results only ~30 minutes after completion.
+- Every job is logged (structured, to a D1 `job_events` table): job id, intent, params, RunPod request id,
+  status, error, cost estimate.
+- The GPU worker writes outputs **directly to R2** and returns only object keys; the gallery never depends on
+  RunPod retaining outputs.
 
 **Consent / trust**
 - The subject is a real person: a **consent record** (her written consent, date, scope) must exist
   before training and before any generation using her LoRA (D8).
-- Training photos are deleted from the network volume and pod after the LoRA is produced; the VPS keeps
-  the originals only if you choose to.
+- Training photos are deleted from the network volume and pod after the LoRA is produced; originals are
+  kept (outside R2 and git) only if you choose to.
 - Every output carries an **invisible watermark** + its generation metadata in the DB.
 - The explicit-term neutralizer runs on **every prompt sent to generation**, including text typed or
   edited in the Generate tab — not only on photo-derived JSON (D15).
@@ -163,14 +179,16 @@ is needed in `handoff.md` under Blockers, commit + push, and wait.
 - **D2 — Base model = SDXL only for v1.** Cheapest, fastest cold starts, deepest LoRA/ControlNet/FaceDetailer
   ecosystem. Use is personal-only, so non-commercial models would be allowed, but none are needed.
 - **D3 — Identity = trained SDXL LoRA + FaceDetailer.** No face-swap, no InstantID in v1.
-- **D4 — PWA (React + Vite) + FastAPI + SQLite.** Installable to the home screen; no app store.
+- **D4 — PWA (React + Vite) + Cloudflare Worker (TypeScript, Hono) + D1 + R2.** Installable to the home screen;
+  no app store. The PWA is served as the Worker's static assets, so app and API share one origin.
 - **D5 — Pose from reference = DWPose skeleton → SDXL OpenPose ControlNet.** (Pose composer deferred.)
 - **D6 — Consent + watermark are build-time primitives.** C2PA deferred (personal use; low value now).
 - **D7 — handoff.md + change_log.md stay separate from plan.md.**
 - **D8 — Consent is a durable record** (`consents` table + stored evidence file), checked before training
   and before LoRA generation.
-- **D9 — Hosting = small VPS (~$5/mo) + Cloudflare Tunnel + Cloudflare Access** (email one-time code, one
-  allowed email). Requires a domain managed in Cloudflare.
+- **D9 — Hosting = Cloudflare serverless (Workers + D1 + R2) behind Cloudflare Access** (email one-time code,
+  one allowed email), on the free tier — pay-per-use, ~$0 idle. Requires a domain managed in Cloudflare.
+  (v3 used a VPS; replaced in v3.1 because a VPS is billed for every hour it exists.)
 - **D10 — Compute = RunPod Serverless** (gen + vision endpoints) **+ one RunPod GPU pod for training.**
   Models + LoRA live on a RunPod network volume; attaching it pins endpoints to that volume's datacenter —
   choose the datacenter once, for GPU availability.
@@ -186,7 +204,10 @@ is needed in `handoff.md` under Blockers, commit + push, and wait.
   shown to you. The neutralizer is applied to every outgoing prompt. A word list alone misses rephrasing, so
   the VLM instruction and the test corpus (Phase 5) are both required.
 - **D16 — Serverless progress = job states, not live steps.** UI shows queued → running → done (+ elapsed time
-  and a cold-start indicator); no per-step preview stream.
+  and a cold-start indicator); no per-step preview stream. The PWA polls the Worker's `GET /jobs/{id}`; the
+  Worker learns completion from the RunPod webhook (D18), never by holding a connection open.
+- **D18 — Job completion = RunPod webhook + reconcile cron.** `/run` is called with a `webhook` URL carrying a
+  per-job HMAC; RunPod retries a failed webhook twice. A cron trigger catches anything missed.
 - **D17 — Worker images are built in GitHub Actions** and pushed to a container registry; the laptop isn't
   required to build or run anything.
 
@@ -202,11 +223,11 @@ commits + pushes after each step on the current phase branch; the manager owns b
 | Role | Owns | Phases | Must not |
 |---|---|---|---|
 | **manager** | control files, branches/merges | all | start a phase before predecessor PASS; merge without PASS |
-| **infra-agent** | `infra/`, `.env.example`, Cloudflare/VPS/RunPod setup | 0, 8 | open inbound web ports; put secrets in git or the PWA |
+| **infra-agent** | `infra/`, `wrangler.toml`, `.dev.vars.example`, Cloudflare/RunPod setup | 0, 8 | leave `workers.dev`/preview URLs on; Access-bypass anything but `/hooks/runpod/*`; put secrets in git or the PWA |
 | **worker-agent** | `worker/gen/`, `manifest.yaml`, CI image build, network volume | 1 | install outside manifest; set max workers > 1 or min workers > 0 |
-| **backend-agent** | `server/` (api, runpod_client, queue), `server/workflows/` | 2–3 | run models on the VPS; bypass runpod_client; skip cost guard |
-| **data-agent** | `server/data/`, `migrations/` | 4 | ship schema change without migration; hard-delete without trash |
-| **vision-agent** | `worker/vision/`, `server/prompt/`, `server/filters/` | 5 | send photos to third-party AI APIs; let an un-neutralized prompt reach generation |
+| **backend-agent** | `server/` (api, runpod_client, jobs, hooks, cron), `server/src/workflows/` | 2–3 | run models or image/byte work in the Worker; bypass runpod_client; skip cost guard; accept an unsigned webhook |
+| **data-agent** | `server/src/data/`, `migrations/` | 4 | ship schema change without migration; hard-delete without trash |
+| **vision-agent** | `worker/vision/`, `server/src/prompt/`, `server/filters/` | 5 | send photos to third-party AI APIs; let an un-neutralized prompt reach generation |
 | **training-agent** | `training/` | 6 | train without a consent record; leave a pod running; leave training photos on the volume |
 | **frontend-agent** | `web/` | 7 | store secrets client-side; reimplement backend logic in the client |
 | **qa-agent** | `tests/`, CI | all gates | mark PASS on mocks or unverified signatures |
@@ -218,16 +239,18 @@ Each phase: **Goal · Steps · Acceptance · Unlocks.** Before Phase 7, phases a
 scripts, and `tests/` — acceptance names those artifacts.
 
 ### Phase 0 — Infrastructure & access (infra-agent)
-**Goal:** a private URL only you can open, on a hardened VPS, with RunPod ready.
+**Goal:** a private URL only you can open, served by a Cloudflare Worker, with D1, R2 and RunPod ready.
 **Steps:** (0.0) materialize §9 + §11 files. (0.1) prerequisites checklist for the human: domain on
-Cloudflare, VPS (Ubuntu LTS), RunPod account + API key, container registry. (0.2) `infra/setup_vps.sh`:
-updates, firewall (SSH only, key-only, no password login), non-root user, Python, systemd units.
-(0.3) Cloudflare Tunnel (`cloudflared`) → `https://studio.<domain>` → API on `127.0.0.1`. (0.4) Cloudflare
-Access app: allow only your email (one-time code). (0.5) API serves a "hello" page and verifies the Access JWT.
-(0.6) RunPod network volume created in the chosen datacenter.
+Cloudflare, Zero Trust team, R2 enabled, RunPod account + API key, the one allowed email. (0.2) Worker skeleton
+(`server/`, TypeScript + Hono) + `wrangler.toml`: D1 database and R2 bucket bindings, custom domain
+`studio.<domain>`, `workers_dev = false`, preview URLs off; serves a "hello" page. (0.3) Cloudflare Access app on
+`studio.<domain>`: allow only your email (one-time code); a bypass policy for `/hooks/runpod/*` only, recorded in
+`infra/access_policy.md`. (0.4) Worker middleware verifies the Access JWT (team domain + AUD) on every non-hook
+route; the hook route checks the HMAC and returns 401 otherwise. (0.5) GitHub Actions deploys the Worker with a
+scoped Cloudflare API token secret. (0.6) RunPod network volume created in the chosen datacenter.
 **Acceptance:** phone opens the URL → email code → hello page (screenshot); a different email is denied
-(screenshot); external port scan shows only SSH; a request straight to the API without a valid Access JWT
-is rejected (test log).
+(screenshot); the `*.workers.dev` address does not serve the app (test log); a request with a forged or missing
+Access JWT is rejected (test log); `/hooks/runpod/x` without a valid signature → 401 (test log).
 **Unlocks:** everything is reachable only by you.
 
 ### Phase 1 — Generation worker (worker-agent)
@@ -236,38 +259,48 @@ is rejected (test log).
 ComfyUI worker (resolve current repo + version); custom nodes pinned per manifest (controlnet_aux for DWPose,
 Impact-Pack (+Subpack) for FaceDetailer, UltimateSDUpscale); volume-population script puts models on the
 network volume (SDXL base + VAE, OpenPose ControlNet SDXL, face detector, upscaler) with sha256 checks;
-GitHub Actions builds/pushes the image; endpoint config: max workers 1, min 0, network volume attached; dump
-`/object_info` from the running worker to `server/workflows/object_info.json`.
-**Acceptance:** `/runsync` with a bundled SDXL txt2img workflow returns an image (saved file); cold-start and
-warm timings recorded in change_log; endpoint shows 0 workers when idle (screenshot).
+handler post-processing: **invisible watermark → upload PNG to R2 `outputs/` via the S3-compatible API → return
+only object keys** (verify the base worker's S3 env vars against its current docs; if it can't target R2, add
+the upload in our handler); GitHub Actions builds/pushes the image; endpoint config: max workers 1, min 0,
+network volume attached, R2 write-scoped key in endpoint env; dump `/object_info` from the running worker to
+`server/src/workflows/object_info.json`.
+**Acceptance:** `/runsync` with a bundled SDXL txt2img workflow returns an R2 object key, and that object is a
+watermarked image (downloaded file + watermark check); cold-start and warm timings recorded in change_log;
+endpoint shows 0 workers when idle (screenshot).
 **Unlocks:** GPU generation without your laptop.
 
 ### Phase 2 — Backend core + RunPod client + job queue (backend-agent)
-**Goal:** the VPS can submit, track, cancel, and collect jobs reliably and within budget.
-**Steps:** FastAPI app; `runpod_client.py` (submit `/run`, poll `/status`, `/cancel`, retries with backoff,
-timeouts, download outputs to VPS storage); persistent SQLite job queue; cost guard (daily cap, monthly
-ceiling, per-job cost estimate from duration); structured logs.
-**Acceptance:** API call → job → image stored on the VPS (file); cancel mid-job works (log); restart the VPS
-service mid-job → job resumes polling and completes (log); exceeding the daily cap is refused (test).
+**Goal:** the Worker can submit, track, cancel, and collect jobs reliably and within budget.
+**Steps:** `runpod_client.ts` (submit `/run` with a per-job signed `webhook` URL, `/status/{id}`, `/cancel`,
+retries with backoff, timeouts — verify every path and payload against current RunPod docs); D1 `jobs` +
+`job_events` tables (job row written before submission); `POST /hooks/runpod/{job_id}` (HMAC check → mark done,
+record R2 keys and duration); reconcile cron (≤ every 10 min: open jobs past expected time → `/status` → settle);
+cost guard (daily cap, monthly ceiling, per-job cost estimate from reported duration); structured events.
+**Acceptance:** API call → job → webhook → D1 row done with an R2 key that downloads (file); cancel mid-job works
+(log); a job whose webhook is blocked on purpose is settled by the cron (log); exceeding the daily cap is refused
+(test); a replayed or forged webhook is rejected (test).
 **Unlocks:** reliable job lifecycle.
 
 ### Phase 3 — Workflow templates (backend-agent)
 **Goal:** every Generate-tab feature is a validated template.
 **Steps:** API-format templates: `txt2img_lora`, `img2img_lora`, `pose_ref` (DWPose → OpenPose ControlNet +
-LoRA), `face_fix` (FaceDetailer, optional on any of the above), `upscale`; `builder.py` injects params by node
-id and validates against `object_info.json`; `registry.py` intent→template; invisible watermark applied to
-every saved output on the VPS. (Before the LoRA exists, templates are tested with LoRA disabled.)
+LoRA), `face_fix` (FaceDetailer, optional on any of the above), `upscale`; `builder.ts` injects params by node
+id and validates against `object_info.json`; `registry.ts` intent→template; input images (img2img source, pose
+reference) are stored in R2 and passed to RunPod as short-lived signed URLs, never as base64 through the Worker.
+(Watermarking is done by the GPU worker, Phase 1. Before the LoRA exists, templates are tested with LoRA disabled.)
 **Acceptance:** each template produces an image via the API (one saved file per template); invalid params fail
 fast against `object_info.json`; watermark is detectable on outputs (test).
 **Unlocks:** the whole Generate tab, minus UI.
 
 ### Phase 4 — Data layer (data-agent)
 **Goal:** gallery, prompts, LoRA, and consent persist and survive change.
-**Steps:** SQLite tables: `generations` (intent, params, seed, prompt, source extract id, parent_id, asset ids,
-cost, status), `assets`, `prompt_extracts` (photo, JSON, replacements made), `loras` (name, trigger, base_arch,
-file), `consents` (subject, scope, date, evidence file); versioned `migrations/`; trash (soft delete,
-recoverable); gallery query API (paginated, newest first, favorites filter); nightly backup of DB + gallery
-(`infra/backup.sh`) to a second location.
+**Steps:** D1 tables: `generations` (intent, params, seed, prompt, source extract id, parent_id, asset ids,
+cost, status), `assets` (R2 key, size, hash), `prompt_extracts` (photo key, JSON, replacements made), `loras`
+(name, trigger, base_arch, file), `consents` (subject, scope, date, evidence file key); versioned `migrations/`;
+trash (soft delete, recoverable; R2 objects removed only when trash is emptied); gallery query API (paginated,
+newest first, favorites filter); images served by streaming from R2 through the Worker (behind Access);
+scheduled GitHub Action exports D1 (`wrangler d1 export` — verify flags) to a private `backups/` prefix; D1's
+built-in point-in-time restore noted as the first recovery option.
 **Acceptance:** 10 generations → paginated gallery query returns them with params; delete → restore from trash;
 migration upgrades an older DB without loss; backup restored into a clean DB matches (test).
 **Unlocks:** Gallery tab data; consent has a home.
@@ -276,8 +309,9 @@ migration upgrades an older DB without loss; backup restored into a clean DB mat
 **Goal:** a photo becomes clean structured JSON and a ready SDXL prompt.
 **Steps:** `worker/vision/` serverless endpoint with an open VLM (D14); fixed **JSON schema**:
 `{subject, appearance, outfit, pose, expression, scene, lighting, camera:{shot, angle, lens}, style, colors,
-quality_tags[], negative[]}`; VLM instructed to return only schema-valid JSON and describe neutrally; server
-validates with Pydantic (one auto-retry on invalid JSON); **neutralizer** (D15) over every field using
+quality_tags[], negative[]}`; VLM instructed to return only schema-valid JSON and describe neutrally; the photo
+goes to R2 first and reaches the VLM as a short-lived signed URL; the Worker validates the JSON with zod (one
+auto-retry on invalid JSON); **neutralizer** (D15) over every field using
 `neutral_map.yaml` with normalization → returns cleaned JSON + list of replacements; `compile_prompt(json, lora)`
 → SDXL positive/negative prompt with the trigger word inserted; optional "use this photo's pose" flag that passes
 the photo to `pose_ref`.
@@ -301,7 +335,8 @@ likeness (file, human-judged); training photos absent from the volume (listing).
 
 ### Phase 7 — The PWA (frontend-agent)
 **Goal:** the three-tab phone app over the proven API.
-**Steps:** React + Vite PWA (manifest, icons, service worker for app-shell caching; installable).
+**Steps:** React + Vite PWA (manifest, icons, service worker for app-shell caching; installable), built into
+the Worker's static assets.
 - **Prompt tab:** camera/upload → progress → editable JSON fields + raw JSON view → highlighted replacements →
   "Send to Generate".
 - **Generate tab:** prompt (prefilled from Prompt tab or typed), LoRA on/off + strength, mode (text→image /
@@ -318,13 +353,14 @@ Generate → pose-from-reference + face fix + upscale → image appears in Galle
 
 ### Phase 8 — Hardening (infra-agent + qa-agent)
 **Goal:** it stays private, cheap, and recoverable.
-**Steps:** backup restore drill; dependency + OS update routine; log rotation; alert (email/Telegram) when
-spend reaches 80% of the monthly ceiling; runbook (§12) verified end to end.
+**Steps:** backup restore drill (D1 export → fresh database); dependency update routine (Dependabot on the repo);
+`job_events` retention/cleanup; alert (email/Telegram) when spend reaches 80% of the monthly ceiling, and when
+Cloudflare free-tier usage (requests, D1, R2) passes 80%; runbook (§12) verified end to end.
 **Acceptance:** restore drill from backup succeeds (log); spend alert fires in a test (log); §10 matrix all PASS.
 
 ---
 
-## 8. Interface contracts (keep stable — `server/api/contracts.py`, Pydantic)
+## 8. Interface contracts (keep stable — `server/src/contracts.ts`, zod)
 - `POST /prompt/extract {photo} -> {extract_id, json, replacements[], compiled_prompt}`
 - `POST /jobs {intent, params} -> {job_id}` — intents: `txt2img_lora | img2img_lora | pose_ref | upscale`;
   `params.face_fix: bool`, `params.upscale: bool`
@@ -335,6 +371,8 @@ spend reaches 80% of the monthly ceiling; runbook (§12) verified end to end.
 - `Lora = {id, name, trigger, base_arch, file}` — base_arch mandatory
 - `consent(subject) -> bool` — training and LoRA generation call this; false → refuse
 - `GET /usage -> {jobs_today, daily_cap, spend_month_est, monthly_ceiling}`
+- `GET /assets/{id}` — streams the image from R2 (behind Access)
+- `POST /hooks/runpod/{job_id}?sig=<hmac>` — RunPod callback; the only Access-bypassed route; returns 200 fast
 
 Contract change = `[DECISION]` entry + update here, then notify dependent roles.
 
@@ -359,24 +397,29 @@ node_modules/
 /training/dataset/
 /training/output/
 *.db
+.dev.vars
+.wrangler/
 ```
 
-**`.env.example`**
+**`.dev.vars.example`**
 ```
-# Copy to .env ON THE VPS ONLY. Never commit .env. Never expose these to the PWA.
+# Local dev only: copy to .dev.vars (gitignored). In production set each SECRET with `wrangler secret put <NAME>`.
+# Plain vars (caps, IDs) go in wrangler.toml [vars]. Never expose any of these to the PWA.
+# --- secrets ---
 RUNPOD_API_KEY=
+WEBHOOK_HMAC_SECRET=           # random 32+ bytes; signs per-job webhook URLs
+R2_SIGNING_ACCESS_KEY_ID=      # R2 S3 key used to mint short-lived signed URLs for RunPod
+R2_SIGNING_SECRET_ACCESS_KEY=
+# --- vars ---
 RUNPOD_GEN_ENDPOINT_ID=
 RUNPOD_VISION_ENDPOINT_ID=
-RUNPOD_NETWORK_VOLUME_ID=
-HF_TOKEN=                      # if any pinned model is gated
 CF_ACCESS_TEAM_DOMAIN=         # e.g. yourteam.cloudflareaccess.com
 CF_ACCESS_AUD=                 # Access application audience tag (JWT verification)
-API_HOST=127.0.0.1
-API_PORT=8000
-DATA_DIR=./var
-LOG_DIR=./var/logs
+PUBLIC_BASE_URL=               # https://studio.<domain>
 DAILY_JOB_CAP=100
 MONTHLY_SPEND_CEILING_USD=30
+# Set on the RunPod endpoints instead (not here): R2 write-scoped key for outputs/, HF_TOKEN if a model is gated.
+# Set in GitHub Actions secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, registry credentials.
 ```
 
 **`manifest.yaml`** — rewritten in Phase 1 to the v3 scope: keep SDXL base + VAE, controlnet_aux (DWPose),
@@ -390,10 +433,10 @@ IP-Adapter, IC-Light, SAM2, ai-toolkit, OneTrainer. Keep per-model `license` fla
 ## 10. Verification matrix (qa-agent; runnable in `tests/`; each produces a named artifact)
 | Gate | Pass condition |
 |---|---|
-| P0 | only your email gets in; other email denied; only SSH open; API rejects missing/invalid Access JWT |
-| P1 | `/runsync` txt2img image returned; idle endpoint at 0 workers; cold/warm timings logged |
-| P2 | job round-trip to VPS storage; cancel works; survives service restart; daily cap enforced |
-| P3 | each template outputs an image; bad params rejected vs `object_info.json`; watermark detectable |
+| P0 | only your email gets in; other email denied; `workers.dev` doesn't serve; forged/missing JWT rejected; unsigned hook → 401 |
+| P1 | `/runsync` txt2img → watermarked image in R2; idle endpoint at 0 workers; cold/warm timings logged |
+| P2 | job → webhook → D1 done + R2 key; cancel works; blocked webhook settled by cron; daily cap enforced; forged webhook rejected |
+| P3 | each template outputs an image; bad params rejected vs `object_info.json`; inputs passed as signed URLs |
 | P4 | gallery pagination; trash/restore; migration lossless; backup restore matches |
 | P5 | 10/10 schema-valid JSON; zero explicit terms survive the corpus; compiled prompt generates |
 | P6 | consent-less training refused; LoRA + sample grid produced; pod terminated; photos removed |
@@ -409,18 +452,18 @@ IP-Adapter, IC-Light, SAM2, ai-toolkit, OneTrainer. Keep per-model `license` fla
 # HANDOFF — read FIRST, rewrite LAST
 ## Current state
 - Phase: 0 — Infrastructure & access
-- Step: 0.0 — Materialize on-disk files (.gitignore, .env.example, handoff.md, change_log.md)
+- Step: 0.0 — Materialize on-disk files (.gitignore, .dev.vars.example, handoff.md, change_log.md)
 - Status: NOT STARTED
 - Owner role: infra-agent
 - Branch: phase-0-infra
 - Last updated: 0000-00-00 00:00 by manager
 ## Next action (do exactly this)
 Create branch `phase-0-infra` off `main`, write the files from plan.md §9 and §11 to the repo root,
-then produce the 0.1 prerequisites checklist for the human (domain on Cloudflare, VPS, RunPod key, registry).
+then produce the 0.1 prerequisites checklist for the human (domain on Cloudflare, Zero Trust, R2, RunPod key).
 ## Acceptance for this step
 All §9 + §11 files exist at repo root and parse.
 ## Blockers
-- Human must provide: domain in Cloudflare, VPS access, RunPod API key.
+- Human must provide: domain in Cloudflare, Zero Trust team, R2 enabled, RunPod API key.
 ## Notes
 - No phase starts before its predecessor has a PASS in change_log.md.
 - Every acceptance check produces a named artifact; no mocks, no assumed API signatures.
@@ -442,7 +485,7 @@ All §9 + §11 files exist at repo root and parse.
 - Artifact: control files present at repo root
 - Why: lock the operating protocol before building
 - Verification: PASS — control files present
-- Follow-ups: infra-agent → §9 files, prerequisites checklist, VPS + Cloudflare setup
+- Follow-ups: infra-agent → §9 files, prerequisites checklist, Cloudflare Worker + Access setup
 ```
 
 ---
@@ -457,12 +500,12 @@ All §9 + §11 files exist at repo root and parse.
 - **Gallery:** tap an image for its prompt/JSON/settings → reuse, favorite, download, or delete (recoverable
   from trash).
 - **Costs:** Settings shows jobs today and estimated monthly spend; caps stop jobs before overspending.
-  Idle cost ≈ VPS + network-volume storage.
+  Idle cost ≈ RunPod network-volume storage + the domain; Cloudflare stays on the free tier for one user.
 - **Retraining:** only via `training/run_pod.sh`, after updating the consent record if scope changes.
 
 ---
 
-## 13. Git / version-control workflow (GitHub repo `salahsterr/imageo`; mandatory)
+## 13. Git / version-control workflow (GitHub repo `3bkarin00/Imageo`; mandatory)
 **Branching model**
 - `main` only receives **phase-complete, acceptance-PASS** work (plus this initial constitution commit).
 - One branch per phase, `phase-<N>-<slug>`: `phase-0-infra`, `phase-1-gen-worker`, `phase-2-backend`,
@@ -489,4 +532,4 @@ blending), dataset health score, in-app training wizard, C2PA credentials, addit
 Z-Image), multi-subject LoRA management UI.
 **Not planned:** video/animation; multiple users or sharing; public access; native app-store apps; commercial
 use (personal use only — revisit model licenses before changing this); rebuilding diffusion/training internals;
-running models on the VPS.
+running models or image processing in the Worker; a VPS or any always-on server.
