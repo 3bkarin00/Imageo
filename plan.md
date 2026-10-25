@@ -598,9 +598,9 @@ running models or image processing in the Worker; a VPS or any always-on server.
 | Repo | `github.com/3bkarin00/Imageo` (or this file's repo) | fixed |
 | Domain (on Cloudflare) | `imageoo.party` | ✅ bought |
 | App URL | `https://studio.imageoo.party` | created in Phase 0.2 |
-| Cloudflare Zero Trust | enabled (free plan) | ✅ — **team name: ask the human** (one.dash.cloudflare.com → Settings) |
+| Cloudflare Zero Trust | enabled (free plan) | ✅ — team name: `wispy-flower-3c4d` (`wispy-flower-3c4d.cloudflareaccess.com`) |
 | Cloudflare R2 | enabled | ✅ — bucket created by Claude Code in 0.2 |
-| Allowed login email | **ask the human** | ⏳ |
+| Allowed login email | `salaheldeenmohamed084@gmail.com` | ✅ |
 | RunPod account | funded | ✅ |
 | RunPod network volume ID | `d61ym2xhuy` | ✅ created — datacenter + size: look up via API (0.6) |
 | RunPod API key | held by the human; set per §17 | never in this file |

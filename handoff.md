@@ -24,8 +24,13 @@ installed wrangler version before relying on it.
 - RunPod API key: the first key was exposed in a chat and must be revoked; human creates a new one and sets it
   only via `wrangler secret put RUNPOD_API_KEY` in their own terminal. Never ask for it in chat.
 ## Blockers
-- Still needed from the human: Zero Trust team name, the one allowed email (plan.md §15).
-- RunPod API key: set per plan.md §17 at session start; then look up the volume's datacenter via the API (0.6).
+- Zero Trust team `wispy-flower-3c4d` and allowed email recorded in plan.md §15 (no longer needed).
+- RunPod API key: human supplied it in the session; stored ONLY in gitignored `.dev.vars`. Treat it as exposed in chat; rotate after the build if desired.
+- NETWORK: this cloud environment's proxy refuses `rest.runpod.io` and `api.cloudflare.com` (403 on CONNECT), so the
+  volume lookup (0.6), wrangler deploy and any Cloudflare/RunPod call are impossible here. Human must open
+  Network access: environment menu in the session title bar -> Edit -> broader access, or add `rest.runpod.io`,
+  `api.runpod.io`, `api.cloudflare.com`, `registry.npmjs.org` under Allowed domains (docs: code.claude.com/docs/en/cloud-environments#network-access). Then start a new session.
+- Still needed: Cloudflare auth for wrangler (scoped `CLOUDFLARE_API_TOKEN`+`CLOUDFLARE_ACCOUNT_ID` as environment variables; `wrangler login` needs a browser).
 ## Notes
 - No phase starts before its predecessor has a PASS in change_log.md.
 - Every acceptance check produces a named artifact; no mocks, no assumed API signatures.
