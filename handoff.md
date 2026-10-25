@@ -9,7 +9,7 @@
 ## Done so far
 - 0.0 PASS — .gitignore, env template (now .dev.vars.example), handoff.md, change_log.md
 - 0.1 PASS — infra/PREREQUISITES.md (revised for v3.1: no VPS)
-- [DECISION] plan.md v3.1 — hosting is Cloudflare Workers + D1 + R2 (see change_log)
+- [DECISION] plan.md v3.1 — hosting is Cloudflare Workers + D1 + R2; v3.2 — watermark removed (see change_log)
 ## Next action (do exactly this)
 When the human confirms prerequisites: create the Worker skeleton in `server/` (TypeScript + Hono) and
 `wrangler.toml` with D1 + R2 bindings, custom domain `studio.<domain>`, `workers_dev = false`, preview URLs off;

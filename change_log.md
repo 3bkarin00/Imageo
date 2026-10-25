@@ -3,6 +3,17 @@
 # ## <YYYY-MM-DD HH:MM> — [Phase X.Y] <title>
 # - Role / Branch / Changed / Files / Artifact / Why / Verification(PASS|FAIL) / Follow-ups
 ---
+## 2026-10-25 — [DECISION] [Phase 0] Invisible watermark removed (plan.md v3.2)
+- Role: manager
+- Branch: phase-0-infra
+- Changed: dropped the invisible watermark from outputs; D6 revised; Phase 1/3 steps and acceptance, §4, §10 updated
+- Files: /plan.md
+- Artifact: plan.md v3.2
+- Why: human decision — the subject co-creates the photoshoots with him for her own use, so a hidden AI-made mark
+  adds no protection she wants. Consent record and per-image metadata in D1 are kept.
+- Verification: PASS — "watermark" appears only in decision/history notes (grep)
+- Follow-ups: none
+
 ## 2026-10-25 — [DECISION] [Phase 0] VPS replaced by Cloudflare serverless (plan.md v3.1)
 - Role: manager
 - Branch: phase-0-infra

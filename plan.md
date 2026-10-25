@@ -1,4 +1,4 @@
-# plan.md — Personal AI Image Studio "imageo" (mobile PWA + cloud GPU) · v3.1
+# plan.md — Personal AI Image Studio "imageo" (mobile PWA + cloud GPU) · v3.2
 
 **This is the project constitution for building `imageo` with Claude Code** (repo:
 `github.com/3bkarin00/Imageo`). It is self-contained: operating protocol, rules, decisions, agent
@@ -34,6 +34,8 @@ phone app backed by cloud GPUs. What changed vs v2.1:
   Backend is a TypeScript Worker; job completion arrives by **RunPod webhook** + a reconcile cron instead of a
   long-running poller; the **GPU worker watermarks and uploads images straight to R2** (Workers' 10 ms CPU limit
   rules out image work in the Worker). Touches §1, §3, §4, D4, D9, D16, D18, Phases 0/1/2/3/4/8, §8–§10, §12.
+- **v3.2 [DECISION] — invisible watermark removed.** The subject is a co-creator of the photoshoots, not a third
+  party, so a hidden "AI-made" mark adds no protection she wants. Generation metadata stays in D1. (D6 revised.)
 
 ---
 
@@ -60,7 +62,7 @@ Phone (PWA) ──HTTPS──▶ Cloudflare Access (email one-time code, only yo
                          │  /run with webhook ──▶        ◀── webhook on completion (/hooks/runpod, HMAC-signed)
                          ▼
         RunPod Serverless endpoints ── network volume (models, LoRA)
-          • gen    : ComfyUI worker (SDXL, ControlNet, FaceDetailer, upscaler) → watermark → upload to R2
+          • gen    : ComfyUI worker (SDXL, ControlNet, FaceDetailer, upscaler) → upload to R2
           • vision : open VLM → JSON description
         RunPod GPU pod (one-off) : LoRA training (kohya sd-scripts) → LoRA to network volume
 ```
@@ -121,7 +123,7 @@ is needed in `handoff.md` under Blockers, commit + push, and wait.
 - studio NEVER implements diffusion/sampling/training loops. Generation = ComfyUI on the worker;
   training = pinned kohya sd-scripts on a pod; JSON description = an open VLM on the vision worker.
 - **The Worker never runs models or heavy image/byte work.** It orchestrates, stores metadata, and serves.
-  Free-plan Workers get 10 ms CPU per request: image decoding, watermarking and base64 handling happen on the
+  Free-plan Workers get 10 ms CPU per request: image decoding, encoding and base64 handling happen on the
   GPU worker; the Worker only streams R2 objects and handles JSON.
 - All RunPod calls go through `server/src/runpod_client.ts`. No raw RunPod HTTP elsewhere.
 - All generation graphs are built by `server/src/workflows/builder.ts` from template JSON + params,
@@ -162,7 +164,7 @@ is needed in `handoff.md` under Blockers, commit + push, and wait.
   before training and before any generation using her LoRA (D8).
 - Training photos are deleted from the network volume and pod after the LoRA is produced; originals are
   kept (outside R2 and git) only if you choose to.
-- Every output carries an **invisible watermark** + its generation metadata in the DB.
+- Every output has its generation metadata (prompt, settings, seed, LoRA) recorded in D1. No watermark (D6).
 - The explicit-term neutralizer runs on **every prompt sent to generation**, including text typed or
   edited in the Generate tab — not only on photo-derived JSON (D15).
 
@@ -182,7 +184,8 @@ is needed in `handoff.md` under Blockers, commit + push, and wait.
 - **D4 — PWA (React + Vite) + Cloudflare Worker (TypeScript, Hono) + D1 + R2.** Installable to the home screen;
   no app store. The PWA is served as the Worker's static assets, so app and API share one origin.
 - **D5 — Pose from reference = DWPose skeleton → SDXL OpenPose ControlNet.** (Pose composer deferred.)
-- **D6 — Consent + watermark are build-time primitives.** C2PA deferred (personal use; low value now).
+- **D6 — Consent is a build-time primitive; no watermark, no C2PA.** The subject co-creates the photoshoots for
+  her own use, so hidden provenance marks add no value; outputs stay untouched lossless PNGs. (Watermark removed v3.2.)
 - **D7 — handoff.md + change_log.md stay separate from plan.md.**
 - **D8 — Consent is a durable record** (`consents` table + stored evidence file), checked before training
   and before LoRA generation.
@@ -259,13 +262,13 @@ Access JWT is rejected (test log); `/hooks/runpod/x` without a valid signature �
 ComfyUI worker (resolve current repo + version); custom nodes pinned per manifest (controlnet_aux for DWPose,
 Impact-Pack (+Subpack) for FaceDetailer, UltimateSDUpscale); volume-population script puts models on the
 network volume (SDXL base + VAE, OpenPose ControlNet SDXL, face detector, upscaler) with sha256 checks;
-handler post-processing: **invisible watermark → upload PNG to R2 `outputs/` via the S3-compatible API → return
+handler post-processing: **upload the lossless PNG to R2 `outputs/` via the S3-compatible API → return
 only object keys** (verify the base worker's S3 env vars against its current docs; if it can't target R2, add
 the upload in our handler); GitHub Actions builds/pushes the image; endpoint config: max workers 1, min 0,
 network volume attached, R2 write-scoped key in endpoint env; dump `/object_info` from the running worker to
 `server/src/workflows/object_info.json`.
 **Acceptance:** `/runsync` with a bundled SDXL txt2img workflow returns an R2 object key, and that object is a
-watermarked image (downloaded file + watermark check); cold-start and warm timings recorded in change_log;
+valid PNG byte-identical to what ComfyUI produced (downloaded file + hash check); cold-start and warm timings recorded in change_log;
 endpoint shows 0 workers when idle (screenshot).
 **Unlocks:** GPU generation without your laptop.
 
@@ -287,9 +290,9 @@ cost guard (daily cap, monthly ceiling, per-job cost estimate from reported dura
 LoRA), `face_fix` (FaceDetailer, optional on any of the above), `upscale`; `builder.ts` injects params by node
 id and validates against `object_info.json`; `registry.ts` intent→template; input images (img2img source, pose
 reference) are stored in R2 and passed to RunPod as short-lived signed URLs, never as base64 through the Worker.
-(Watermarking is done by the GPU worker, Phase 1. Before the LoRA exists, templates are tested with LoRA disabled.)
+(Before the LoRA exists, templates are tested with LoRA disabled.)
 **Acceptance:** each template produces an image via the API (one saved file per template); invalid params fail
-fast against `object_info.json`; watermark is detectable on outputs (test).
+fast against `object_info.json`; inputs reach RunPod as signed URLs (test).
 **Unlocks:** the whole Generate tab, minus UI.
 
 ### Phase 4 — Data layer (data-agent)
@@ -434,7 +437,7 @@ IP-Adapter, IC-Light, SAM2, ai-toolkit, OneTrainer. Keep per-model `license` fla
 | Gate | Pass condition |
 |---|---|
 | P0 | only your email gets in; other email denied; `workers.dev` doesn't serve; forged/missing JWT rejected; unsigned hook → 401 |
-| P1 | `/runsync` txt2img → watermarked image in R2; idle endpoint at 0 workers; cold/warm timings logged |
+| P1 | `/runsync` txt2img → lossless PNG in R2 (hash matches); idle endpoint at 0 workers; cold/warm timings logged |
 | P2 | job → webhook → D1 done + R2 key; cancel works; blocked webhook settled by cron; daily cap enforced; forged webhook rejected |
 | P3 | each template outputs an image; bad params rejected vs `object_info.json`; inputs passed as signed URLs |
 | P4 | gallery pagination; trash/restore; migration lossless; backup restore matches |
