@@ -3,6 +3,16 @@
 # ## <YYYY-MM-DD HH:MM> — [Phase X.Y] <title>
 # - Role / Branch / Changed / Files / Artifact / Why / Verification(PASS|FAIL) / Follow-ups
 ---
+## 2026-10-26 — [Phase 0.1] Prerequisites partially received
+- Role: infra-agent
+- Branch: claude/documentation-handoff-d7n3sx
+- Changed: recorded domain, Zero Trust team name and allowed email in handoff.md (non-secret values only)
+- Files: /handoff.md
+- Artifact: handoff.md Blockers items 1-2 marked received
+- Why: track which human prerequisites remain
+- Verification: PASS (bookkeeping only) — 0.1 itself still open: VPS, RunPod, registry, datacenter outstanding; Cloudflare zone Active status unverified
+- Follow-ups: human supplies remaining items; then 0.2
+
 ## 2026-10-26 07:55 — [Phase 0.0] Materialize on-disk files
 - Role: infra-agent
 - Branch: claude/documentation-handoff-d7n3sx (session-designated; plan names phase-0-infra — see handoff Notes)

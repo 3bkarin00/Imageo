@@ -5,7 +5,7 @@
 - Status: BLOCKED on human
 - Owner role: infra-agent
 - Branch: claude/documentation-handoff-d7n3sx (plan says phase-0-infra; see Notes)
-- Last updated: 2026-10-26 07:55 by infra-agent
+- Last updated: 2026-10-26 by infra-agent
 ## Next action (do exactly this)
 When the human has supplied the Blockers below, write `infra/setup_vps.sh` (step 0.2): apt updates,
 firewall (SSH only, key-only, no password login), non-root user, Python, systemd units. Verify each
@@ -14,8 +14,8 @@ command against the live VPS / installed packages — do not assume. Nothing els
 0.0 satisfied (files exist and parse). 0.1 is satisfied when the human confirms the items below.
 ## Blockers
 Human must provide (reply in chat or commit to a private place — NEVER put secrets in git):
-1. A domain whose DNS is managed in Cloudflare (free plan is fine) — tell me the domain; studio will live at `studio.<domain>`.
-2. A Cloudflare account with Zero Trust enabled (free tier), and the single email to allow via Access one-time code.
+1. ~~Domain~~ RECEIVED: `imageo.party` (studio will live at `studio.imageo.party`). Still to confirm: its nameservers point at Cloudflare and the zone shows Active (not checked — no DNS tooling in session).
+2. ~~Zero Trust + email~~ RECEIVED: Zero Trust team name `wispy-flower-3c4d` (so `CF_ACCESS_TEAM_DOMAIN` is probably `wispy-flower-3c4d.cloudflareaccess.com` — verify when the Access app exists); allowed email `salaheldeenmohamed084@gmail.com`. `CF_ACCESS_AUD` comes after step 0.4.
 3. A VPS (Ubuntu LTS, ~$5/mo, 1 vCPU/1 GB+) with: its IP, a non-root sudo user, and your SSH public key installed. Say which provider.
 4. A RunPod account with a funded balance and an API key (store it only in the VPS `.env`, not in chat or git).
 5. A container registry for worker images (GitHub Container Registry on this repo is the default; confirm).
