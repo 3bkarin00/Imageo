@@ -1,0 +1,15 @@
+.env
+/var/
+/models/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+__pycache__/
+.venv/
+node_modules/
+/web/dist/
+/training/dataset/
+/training/output/
+*.db
