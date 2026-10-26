@@ -3,6 +3,16 @@
 # ## <YYYY-MM-DD HH:MM> — [Phase X.Y] <title>
 # - Role / Branch / Changed / Files / Artifact / Why / Verification(PASS|FAIL) / Follow-ups
 ---
+## 2026-10-26 07:55 — [Phase 0.2] Re-check: still blocked on network
+- Role: infra-agent
+- Branch: phase-0-infra
+- Changed: nothing built; re-tested reachability from this session
+- Files: /change_log.md, /handoff.md
+- Artifact: curl results — rest.runpod.io 000, api.cloudflare.com 000, registry.npmjs.org 200; CLOUDFLARE_* env vars present (2), `.dev.vars` absent
+- Why: 0.2 acceptance needs a wrangler deploy; Cloudflare API is unreachable here
+- Verification: FAIL — blocker unchanged
+- Follow-ups: human adds rest.runpod.io, api.runpod.io, api.cloudflare.com to the environment's allowed domains, then starts a NEW session
+
 ## 2026-10-25 — [Phase 0.1] plan.md v3.3 — everything in one file
 - Role: manager
 - Branch: phase-0-infra

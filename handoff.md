@@ -5,7 +5,7 @@
 - Status: BLOCKED (waiting on human prerequisites)
 - Owner role: infra-agent
 - Branch: phase-0-infra
-- Last updated: 2026-10-25 by manager
+- Last updated: 2026-10-26 07:55 by infra-agent (network re-check: still blocked)
 ## Done so far
 - 0.0 PASS — .gitignore, env template (now .dev.vars.example), handoff.md, change_log.md
 - 0.1 PASS — infra/PREREQUISITES.md (revised for v3.1: no VPS)
